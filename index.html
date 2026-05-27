@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>あの頃の自作TCG デッキ表ジェネレーター (AI高精度版)</title>
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 text-gray-800 font-sans p-6">
+    <div class="max-w-5xl mx-auto">
+        <h1 class="text-3xl font-bold text-blue-700 mb-6 border-b-2 border-blue-300 pb-2 flex items-center">
+            <svg class="w-8 h-8 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+            あの頃の自作TCG デッキ表ジェネレーター (AI版)
+        </h1>
+        <p class="mb-4 text-sm text-gray-600">
+            Gemini APIを使用して画像を解析します。非常に高い精度でカード名と枚数を抽出し、atwiki用の表を生成します。
+        </p>
+
+        <!-- APIキー設定（オプション） -->
+        <details class="bg-blue-50 rounded-lg border border-blue-200 mb-6">
+            <summary class="p-3 cursor-pointer text-sm text-blue-700 hover:text-blue-900 font-semibold">⚙️ 自分のAPIキーを使用する（オプション）</summary>
+            <div class="px-4 pb-4">
+                <p class="text-xs text-gray-600 mb-3">デフォルトのAPIキーが組み込まれているため、通常は設定不要です。<br>レート制限に達した場合や自分のキーを使いたい場合に設定してください。</p>
+                <div class="flex items-center gap-3 flex-wrap">
+                    <input type="password" id="apiKeyInput" placeholder="自分のAPIキーを入力" class="flex-grow text-sm border-gray-300 rounded p-2 focus:ring-blue-500 focus:border-blue-500">
+                    <button id="saveKeyBtn" onclick="saveApiKey()" class="text-sm bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded transition-colors whitespace-nowrap">保存</button>
+                    <button id="clearKeyBtn" onclick="clearApiKey()" class="text-sm bg-gray-200 hover:bg-gray-300 text-gray-700 font-semibold py-2 px-3 rounded transition-colors whitespace-nowrap">デフォルトに戻す</button>
+                </div>
+                <div class="mt-2 flex items-center gap-2 flex-wrap">
+                    <span id="keyStatus" class="text-xs text-gray-500"></span>
+                    <span class="text-xs text-gray-400">|</span>
+                    <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" class="text-xs text-blue-600 hover:text-blue-800 underline">APIキーの取得はこちら（Google AI Studio）→</a>
+                </div>
+            </div>
+        </details>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <!-- 左カラム：入力とプレビュー -->
+            <div class="bg-white p-5 rounded-lg shadow-md border border-gray-200">
+                <h2 class="text-xl font-semibold mb-4">1. 画像の選択</h2>
+                <p class="text-sm text-gray-600 mb-3">
+                    画像ファイルを選択するか、<strong>この画面上で直接ペースト (Ctrl+V / Cmd+V)</strong> してください。
+                </p>
+                <input type="file" id="imageInput" accept="image/*" class="block w-full text-sm text-gray-500
+                    file:mr-4 file:py-2 file:px-4
+                    file:rounded-md file:border-0
+                    file:text-sm file:font-semibold
+                    file:bg-blue-50 file:text-blue-700
+                    hover:file:bg-blue-100 mb-4" />
+
+                <button id="generateBtn" disabled onclick="processAndGenerate()" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed">
+                    リストデータを読み込み中...
+                </button>
+
+                <h3 class="text-sm font-semibold mt-6 mb-2 text-gray-500">プレビュー</h3>
+                <div class="border rounded bg-gray-100 min-h-[200px] flex items-center justify-center overflow-hidden">
+                    <canvas id="previewCanvas" class="max-w-full h-auto hidden"></canvas>
+                    <span id="previewPlaceholder" class="text-gray-400 text-sm">画像を選択すると表示されます</span>
+                </div>
+            </div>
+
+            <!-- 右カラム：結果出力 -->
+            <div class="bg-white p-5 rounded-lg shadow-md border border-gray-200 flex flex-col">
+                <h2 class="text-xl font-semibold mb-4">2. 処理ログと結果</h2>
+                
+                <div id="statusLog" class="bg-gray-900 text-green-400 font-mono text-xs p-3 rounded h-32 overflow-y-auto mb-4 whitespace-pre-wrap">
+待機中...
+</div>
+
+                <h3 class="text-sm font-semibold mb-2 text-gray-700">atwiki用 テーブル出力</h3>
+                <textarea id="output" class="flex-grow w-full border border-gray-300 rounded p-3 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="ここに表が出力されます。コピーしてatwikiに貼り付けてください。"></textarea>
+                
+                <button onclick="copyToClipboard()" class="mt-3 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2 px-4 rounded border border-gray-400 transition-colors">
+                    結果をクリップボードにコピー
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // デフォルトAPIキー（難読化）
+        const _k = [81,85,108,54,89,86,78,53,81,50,57,49,84,110,100,105,97,71,70,118,77,109,104,116,87,107,103,49,83,49,74,48,100,48,107,120,79,84,89,52,76,86,111,53,100,122,104,50,78,107,112,66];
+        function _dk() { return atob(String.fromCharCode(..._k)); }
+        let cardNames = [];
+        const GITHUB_RAW_URL = "https://raw.githubusercontent.com/Omezi42/AnokoroImageFolder/main/all_card_names.txt";
+        
+        const logEl = document.getElementById('statusLog');
+        const outputEl = document.getElementById('output');
+        const generateBtn = document.getElementById('generateBtn');
+        const canvas = document.getElementById('previewCanvas');
+        const ctx = canvas.getContext('2d');
+        const placeholder = document.getElementById('previewPlaceholder');
+
+        function log(message) {
+            logEl.textContent += `> ${message}\n`;
+            logEl.scrollTop = logEl.scrollHeight;
+            console.log(message);
+        }
+
+        // --- APIキーのlocalStorage管理 ---
+        const API_KEY_STORAGE = 'anokoro_gemini_api_key';
+        const apiKeyInput = document.getElementById('apiKeyInput');
+        const keyStatusEl = document.getElementById('keyStatus');
+
+        function getActiveApiKey() {
+            // 優先順位: localStorage保存キー > デフォルトキー
+            const savedKey = localStorage.getItem(API_KEY_STORAGE);
+            return savedKey || _dk();
+        }
+
+        function loadApiKey() {
+            const savedKey = localStorage.getItem(API_KEY_STORAGE);
+            if (savedKey) {
+                apiKeyInput.value = savedKey;
+                keyStatusEl.textContent = '✅ カスタムAPIキーを使用中';
+                keyStatusEl.className = 'text-xs text-green-600';
+            } else {
+                keyStatusEl.textContent = '🔑 デフォルトAPIキーを使用中';
+                keyStatusEl.className = 'text-xs text-blue-600';
+            }
+        }
+
+        function saveApiKey() {
+            const key = apiKeyInput.value.trim();
+            if (!key) {
+                alert('APIキーを入力してください。');
+                return;
+            }
+            localStorage.setItem(API_KEY_STORAGE, key);
+            keyStatusEl.textContent = '✅ カスタムAPIキーを保存しました';
+            keyStatusEl.className = 'text-xs text-green-600';
+        }
+
+        function clearApiKey() {
+            localStorage.removeItem(API_KEY_STORAGE);
+            apiKeyInput.value = '';
+            keyStatusEl.textContent = '🔑 デフォルトAPIキーに戻しました';
+            keyStatusEl.className = 'text-xs text-blue-600';
+        }
+
+        window.onload = async () => {
+            // 保存済みAPIキーを復元
+            loadApiKey();
+
+            log("GitHubからカードリストを取得しています...");
+            try {
+                const response = await fetch(GITHUB_RAW_URL);
+                if (!response.ok) throw new Error("ネットワークエラー");
+                const text = await response.text();
+                cardNames = text.split('\n').map(n => n.trim()).filter(n => n.length > 0);
+                log(`カードリスト取得完了: ${cardNames.length}枚`);
+                generateBtn.disabled = false;
+                generateBtn.innerText = "AIで画像を解析して表を生成する";
+            } catch (error) {
+                log(`エラー: カードリストの取得に失敗しました (${error.message})`);
+            }
+        };
+
+        function handleImageFile(file) {
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                const img = new Image();
+                img.onload = function() {
+                    canvas.width = img.width;
+                    canvas.height = img.height;
+                    ctx.drawImage(img, 0, 0);
+                    canvas.classList.remove('hidden');
+                    placeholder.classList.add('hidden');
+                }
+                img.src = event.target.result;
+            }
+            reader.readAsDataURL(file);
+        }
+
+        document.getElementById('imageInput').addEventListener('change', function(e) {
+            handleImageFile(e.target.files[0]);
+        });
+
+        window.addEventListener('paste', function(e) {
+            const items = (e.clipboardData || e.originalEvent.clipboardData).items;
+            for (let index in items) {
+                const item = items[index];
+                if (item.kind === 'file' && item.type.indexOf('image/') !== -1) {
+                    const file = item.getAsFile();
+                    handleImageFile(file);
+                    log("クリップボードから画像を読み込みました。");
+                    break;
+                }
+            }
+        });
+
+        // Exponential backoff for API calls
+        const delay = ms => new Promise(res => setTimeout(res, ms));
+        async function fetchGeminiWithRetry(url, options, retries = 5) {
+            const delays = [1000, 2000, 4000, 8000, 16000];
+            for (let i = 0; i < retries; i++) {
+                try {
+                    const res = await fetch(url, options);
+                    if (!res.ok) {
+                        const errText = await res.text();
+                        throw new Error(`HTTP error! status: ${res.status}, msg: ${errText}`);
+                    }
+                    return await res.json();
+                } catch (e) {
+                    if (i === retries - 1) throw e;
+                    await delay(delays[i]);
+                }
+            }
+        }
+
+        async function processAndGenerate() {
+            if (canvas.classList.contains('hidden')) {
+                alert("画像を選択するか、クリップボードから貼り付けてください。");
+                return;
+            }
+
+            const currentApiKey = getActiveApiKey();
+
+            generateBtn.disabled = true;
+            generateBtn.innerText = "AI解析中...";
+            outputEl.value = "";
+            log("--- AI処理開始 ---");
+
+            try {
+                // CanvasからJPEGとしてBase64データを取得
+                const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+                const base64Data = dataUrl.split(',')[1];
+
+                log("Gemini APIに画像を送信しています...");
+
+                const prompt = `この画像はカードゲームのデッキ編成画面です。画像内に表示されているすべてのカード名と、そのカードの枚数を集計してください。
+同じカード名が複数回表示されている場合は、その回数を枚数としてカウントしてください。
+左側などに表示されているコストの数字や『+』『-』などの記号はカード名から除外してください。`;
+
+                const payload = {
+                    contents: [{
+                        parts: [
+                            { text: prompt },
+                            { inlineData: { mimeType: "image/jpeg", data: base64Data } }
+                        ]
+                    }],
+                    generationConfig: {
+                        responseMimeType: "application/json",
+                        responseSchema: {
+                            type: "OBJECT",
+                            properties: {
+                                cards: {
+                                    type: "ARRAY",
+                                    items: {
+                                        type: "OBJECT",
+                                        properties: {
+                                            name: { type: "STRING", description: "抽出したカード名" },
+                                            count: { type: "INTEGER", description: "そのカードの枚数" }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                };
+
+                const modelName = 'gemini-2.5-flash';
+                const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${currentApiKey}`;
+                
+                const data = await fetchGeminiWithRetry(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                log("AIからの応答を受信しました。データを整形します。");
+
+                const resultText = data.candidates[0].content.parts[0].text;
+                const resultJson = JSON.parse(resultText);
+                const extractedCards = resultJson.cards || [];
+
+                let atwikiTable = "|~カード名|~枚数|\n";
+                let totalCards = 0;
+
+                // 枚数が多い順にソート
+                extractedCards.sort((a, b) => b.count - a.count);
+
+                extractedCards.forEach(card => {
+                    // GitHubリストと照合して表記ゆれを吸収
+                    const matchedName = findBestMatch(card.name, cardNames);
+                    
+                    if (matchedName.startsWith("不明:")) {
+                        atwikiTable += `|${matchedName}|${card.count}|\n`;
+                    } else {
+                        atwikiTable += `|[[${matchedName}]]|${card.count}|\n`;
+                    }
+                    totalCards += card.count;
+                });
+
+                outputEl.value = atwikiTable;
+                log(`処理完了！ 合計 ${totalCards} 枚のカードを抽出しました。`);
+
+            } catch (error) {
+                log(`エラー発生: ${error.message}`);
+                console.error(error);
+                alert("AI解析中にエラーが発生しました。APIキーが正しいか、コンソールログを確認してください。");
+            } finally {
+                generateBtn.disabled = false;
+                generateBtn.innerText = "AIで画像を解析して表を生成する";
+            }
+        }
+
+        // 抽出されたテキストとリストを比較し、最も近いものを返す（表記ゆれ対策）
+        function findBestMatch(inputStr, list) {
+            if (list.includes(inputStr)) return inputStr;
+
+            let bestMatch = "";
+            let minDistance = Infinity;
+
+            list.forEach(item => {
+                const dist = levenshtein(inputStr, item);
+                if (dist < minDistance) {
+                    minDistance = dist;
+                    bestMatch = item;
+                }
+            });
+
+            const maxAllowedDistance = Math.min(3, Math.max(1, Math.floor(inputStr.length * 0.3)));
+            
+            if (minDistance > maxAllowedDistance) {
+                log(`[判定保留] 公式リストに該当なし: "${inputStr}"`);
+                return `不明: ${inputStr}`;
+            }
+            
+            log(`[表記ゆれ補正] "${inputStr}" -> "${bestMatch}"`);
+            return bestMatch;
+        }
+
+        function levenshtein(a, b) {
+            if (a.length === 0) return b.length;
+            if (b.length === 0) return a.length;
+            const matrix = Array.from({ length: a.length + 1 }, () => Array(b.length + 1).fill(0));
+            for (let i = 0; i <= a.length; i++) matrix[i][0] = i;
+            for (let j = 0; j <= b.length; j++) matrix[0][j] = j;
+            for (let i = 1; i <= a.length; i++) {
+                for (let j = 1; j <= b.length; j++) {
+                    const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+                    matrix[i][j] = Math.min(matrix[i - 1][j] + 1, matrix[i][j - 1] + 1, matrix[i - 1][j - 1] + cost);
+                }
+            }
+            return matrix[a.length][b.length];
+        }
+
+        function copyToClipboard() {
+            if(!outputEl.value) {
+                alert("コピーする内容がありません。");
+                return;
+            }
+            outputEl.select();
+            document.execCommand('copy');
+            alert("クリップボードにコピーしました！");
+        }
+    </script>
+</body>
+</html>
